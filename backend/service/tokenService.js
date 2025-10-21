@@ -17,7 +17,7 @@ export async function generateTokens(userPayload) {
   const accessToken = await new SignJWT(userPayload)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime("1m") // Access Token kedaluwarsa dalam 15 menit
+    .setExpirationTime("15m") // Access Token kedaluwarsa dalam 15 menit
     .sign(ACCESS_TOKEN_SECRET);
 
   // 2. Refresh Token (Long-lived, untuk mendapatkan token baru)
