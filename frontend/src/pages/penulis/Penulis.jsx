@@ -1,10 +1,9 @@
 import React from "react";
 import { BookOpen, LogOut } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../../contexts/AuthContext";
+import { useAuth } from "../../contexts/AuthContext/hooks/useAuth";
 
-// Components untuk Penulis
-import MyQuotesManagement from "../../components/Penulis/MyQuotesManagement";
+import MyQuotesManagement from "../../components/Penulis/MyQuoteManagement";
 
 const Sidebar = ({ onLogout, user }) => {
   return (

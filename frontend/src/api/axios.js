@@ -22,14 +22,42 @@ const processQueue = (error, token = null) => {
   failedQueue = [];
 };
 
+// Constants untuk localStorage keys
+const STORAGE_KEYS = {
+  ACCESS_TOKEN: "accessToken",
+  REFRESH_TOKEN: "refreshToken",
+  USER_ID: "userId",
+  USER_NAME: "userName",
+  USER_ROLE: "userRole",
+};
+
+// Helper function untuk logout
+const logout = () => {
+  console.log("🚪 Logging out...");
+  Object.values(STORAGE_KEYS).forEach((key) => {
+    localStorage.removeItem(key);
+  });
+
+  // Redirect ke login page
+  if (window.location.pathname !== "/login") {
+    window.location.href = "/login";
+  }
+};
+
+// Helper function untuk mendapatkan access token
+const getAccessToken = () => localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
+const getRefreshToken = () => localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
+
 // Request Interceptor
 api.interceptors.request.use(
   (config) => {
-    const accessToken = localStorage.getItem("accessToken");
+    const accessToken = getAccessToken();
     if (accessToken) {
       config.headers.Authorization = `Bearer ${accessToken}`;
       console.log(
         "🔄 Request dengan token:",
+        config.url,
+        "Token:",
         accessToken.substring(0, 20) + "..."
       );
     }
@@ -38,7 +66,7 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response Interceptor - UPDATED FOR USER DATA
+// Response Interceptor - IMPROVED VERSION
 api.interceptors.response.use(
   (response) => {
     console.log("✅ Response success:", response.config.url);
@@ -47,27 +75,32 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    console.log("🔴 Interceptor Error:", {
-      url: originalRequest?.url,
-      status: error.response?.status,
-      message: error.response?.data?.message,
-      isRefreshing,
-      hasRetry: originalRequest?._retry,
-    });
+    // Handle network errors atau request cancelled
+    if (!error.response) {
+      console.log("🔴 Network error or request cancelled:", error.message);
+      return Promise.reject(error);
+    }
 
-    // Handle both 401 AND 403 for token issues
-    const isTokenError =
-      error.response?.status === 401 || error.response?.status === 403;
+    const { status, data } = error.response;
+    const isTokenError = status === 401 || status === 403;
     const shouldRetry =
       isTokenError &&
       !originalRequest?._retry &&
       originalRequest?.url &&
-      !originalRequest.url.includes("/auth/");
+      !originalRequest.url.includes("/auth/") &&
+      getRefreshToken(); // Hanya retry jika ada refresh token
+
+    console.log("🔴 Interceptor Error:", {
+      url: originalRequest?.url,
+      status,
+      message: data?.message,
+      isRefreshing,
+      hasRetry: originalRequest?._retry,
+      shouldRetry,
+    });
 
     if (shouldRetry) {
-      console.log(
-        "🔄 Token error detected (401/403), starting token refresh..."
-      );
+      console.log("🔄 Token error detected, starting token refresh...");
 
       if (isRefreshing) {
         console.log("⏳ Refresh already in progress, queuing request...");
@@ -78,37 +111,32 @@ api.interceptors.response.use(
             originalRequest.headers.Authorization = `Bearer ${token}`;
             return api(originalRequest);
           })
-          .catch((err) => Promise.reject(err));
+          .catch((err) => {
+            console.log("❌ Queued request failed:", err);
+            return Promise.reject(err);
+          });
       }
 
       originalRequest._retry = true;
       isRefreshing = true;
 
-      const refreshToken = localStorage.getItem("refreshToken");
-
-      if (!refreshToken) {
-        console.log("❌ No refresh token found");
-        logout();
-        return Promise.reject(error);
-      }
-
       try {
         console.log("🔄 Calling refresh token endpoint...");
+        const refreshToken = getRefreshToken();
 
-        // Use direct axios to avoid interceptor loop
         const refreshResponse = await axios.post(
-          `${API_CONFIG.baseURLServer}/api/auth/refresh`,
+          `${API_CONFIG.baseURL}/auth/refresh`, // PERBAIKAN: path yang konsisten
           { refreshToken },
           {
             headers: {
               "Content-Type": "application/json",
             },
+            timeout: 10000, // Timeout 10 detik
           }
         );
 
-        console.log("✅ Refresh response:", refreshResponse.data);
+        console.log("✅ Refresh token successful");
 
-        // PERBAIKAN: Ambil semua data user dari response
         const {
           accessToken: newAccessToken,
           refreshToken: newRefreshToken,
@@ -121,30 +149,23 @@ api.interceptors.response.use(
           throw new Error("No access token in refresh response");
         }
 
-        console.log("💾 Saving new tokens and user data to localStorage...");
+        console.log("💾 Saving new tokens...");
 
-        // Simpan semua data
-        localStorage.setItem("accessToken", newAccessToken);
+        // Update tokens dan user data
+        localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, newAccessToken);
         if (newRefreshToken) {
-          localStorage.setItem("refreshToken", newRefreshToken);
+          localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, newRefreshToken);
         }
-        // Simpan data user jika ada
-        if (nama) {
-          localStorage.setItem("userName", nama);
-        }
-        if (role) {
-          localStorage.setItem("userRole", role);
-        }
-        if (userId) {
-          localStorage.setItem("userId", userId);
-        }
+        if (nama) localStorage.setItem(STORAGE_KEYS.USER_NAME, nama);
+        if (role) localStorage.setItem(STORAGE_KEYS.USER_ROLE, role);
+        if (userId) localStorage.setItem(STORAGE_KEYS.USER_ID, userId);
 
         console.log("📝 User data updated:", { nama, role, userId });
 
-        // Update the failed request with new token
+        // Update authorization header untuk request asli
         originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
 
-        // Process any queued requests
+        // Process semua request yang tertahan dengan token baru
         processQueue(null, newAccessToken);
 
         console.log("🔄 Retrying original request...");
@@ -156,29 +177,40 @@ api.interceptors.response.use(
           message: refreshError.message,
         });
 
-        // Process queue with error
+        // Process semua request yang tertahan dengan error
         processQueue(refreshError, null);
-        logout();
+
+        // Logout hanya jika error bukan 401 dari refresh endpoint
+        if (refreshError.response?.status !== 401) {
+          logout();
+        } else {
+          // Jika refresh token juga invalid, logout
+          logout();
+        }
+
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;
       }
     }
 
-    // For other errors, just reject
+    // Handle token errors yang tidak bisa di-retry
+    if (isTokenError && originalRequest?.url?.includes("/auth/")) {
+      console.log("🔴 Auth endpoint error, logging out...");
+      logout();
+    }
+
+    // Handle other errors
     return Promise.reject(error);
   }
 );
 
-const logout = () => {
-  console.log("🚪 Logging out...");
-  // PERBAIKAN: Hapus semua data user
-  localStorage.removeItem("accessToken");
-  localStorage.removeItem("refreshToken");
-  localStorage.removeItem("userId");
-  localStorage.removeItem("userName");
-  localStorage.removeItem("userRole");
-  window.location.href = "/login";
+// Tambahkan method untuk manual logout
+api.logout = logout;
+
+// Tambahkan method untuk check auth status
+api.isAuthenticated = () => {
+  return !!getAccessToken();
 };
 
 export default api;
