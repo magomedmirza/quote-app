@@ -1,35 +1,54 @@
-import { PrismaClient } from "@prisma/client";
+const db = require("../db/index").getDB();
+const { quotes, users, kategoris } = require("../db/schema");
+const { eq, and } = require("drizzle-orm");
 
-const prisma = new PrismaClient();
-
-export const getAllQuote = async (req, res) => {
+const getAllQuote = async (req, res) => {
   try {
-    const quote = await prisma.quote.findMany({
-      include: {
-        user: { select: { nama: true } },
-        kategori: { select: { nama: true } },
-      },
-    });
+    const quote = await db
+      .select({
+        id: quotes.id,
+        quote: quotes.quote,
+        author: quotes.author,
+        kategoriId: quotes.kategoriId,
+        userId: quotes.userId,
+        user: { nama: users.nama },
+        kategori: { nama: kategoris.nama },
+      })
+      .from(quotes)
+      .leftJoin(users, eq(quotes.userId, users.id))
+      .leftJoin(kategoris, eq(quotes.kategoriId, kategoris.id));
     if (quote.length === 0) {
       return res.status(404).json({ message: "Data Quote kosong !" });
-    } else {
-      return res.status(200).json(quote);
     }
+
+    return res.status(200).json(quote);
   } catch (error) {
-    return res.status(500).json({ error: error.code, message: error.message });
+    console.error("Error in getAllQuote:", error);
+    return res.status(500).json({
+      error: error.code,
+      message: error.message,
+      stack: error.stack, // untuk melihat line error yang tepat
+    });
   }
 };
 
-export const getQuoteByUserId = async (req, res) => {
+const getQuoteByUserId = async (req, res) => {
   try {
     const userId = Number(req.params.id);
-    const quoteUserId = await prisma.quote.findMany({
-      include: {
-        user: { select: { nama: true } },
-        kategori: { select: { nama: true } },
-      },
-      where: { userId: userId },
-    });
+    const quoteUserId = await db
+      .select({
+        id: quotes.id,
+        quote: quotes.quote,
+        author: quotes.author,
+        kategoriId: quotes.kategoriId,
+        userId: quotes.userId,
+        user: { nama: users.nama },
+        kategori: { nama: kategoris.nama },
+      })
+      .from(quotes)
+      .leftJoin(users, eq(quotes.userId, users.id))
+      .leftJoin(kategoris, eq(quotes.kategoriId, kategoris.id))
+      .where(eq(quotes.userId, userId));
 
     if (quoteUserId.length === 0) {
       return res.status(404).json({ message: "Anda Belum Memiliki Quote !" });
@@ -42,18 +61,27 @@ export const getQuoteByUserId = async (req, res) => {
   }
 };
 
-export const getQuoteById = async (req, res) => {
+const getQuoteById = async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const quote = await prisma.quote.findUnique({
-      where: { id: id },
-      include: {
-        user: { select: { nama: true } },
-        kategori: { select: { nama: true } },
-      },
-    });
-    if (quote.length === 0) {
-      return res.status(404).json({ message: "Data Quote kosong !" });
+    const [quote] = await db
+      .select({
+        id: quotes.id,
+        quote: quotes.quote,
+        author: quotes.author,
+        kategoriId: quotes.kategoriId,
+        userId: quotes.userId,
+        user: { nama: users.nama },
+        kategori: { nama: kategoris.nama },
+      })
+      .from(quotes)
+      .leftJoin(users, eq(quotes.userId, users.id))
+      .leftJoin(kategoris, eq(quotes.kategoriId, kategoris.id))
+      .where(eq(quotes.id, id))
+      .limit(1);
+
+    if (!quote) {
+      return res.status(404).json({ message: "Data Quote tidak ditemukan !" });
     } else {
       return res.status(200).json(quote);
     }
@@ -61,57 +89,63 @@ export const getQuoteById = async (req, res) => {
     res.status(500).json({ error: error.code, message: error.message });
   }
 };
-export const createQuote = async (req, res) => {
+
+const createQuote = async (req, res) => {
   try {
     const { kategoriId, quote, author, userId } = req.body;
-    const quotes = await prisma.quote.create({
-      data: {
-        kategoriId: Number(kategoriId),
-        quote,
-        author,
-        userId: Number(userId),
-      },
+
+    await db.insert(quotes).values({
+      kategoriId: Number(kategoriId),
+      quote,
+      author,
+      userId: Number(userId),
     });
-    return res.status(201).json({ message: "Quote berhasil ditambah", quote });
+
+    return res.status(201).json({
+      message: "Quote berhasil ditambah",
+    });
   } catch (error) {
     res.status(500).json({ error: error.code, message: error.message });
   }
 };
-export const updateQuote = async (req, res) => {
+
+const updateQuote = async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { kategoriId, quote, author, userId } = req.body;
 
-    const existingQuote = await prisma.quote.findUnique({
-      where: { id: id },
-    });
+    const [existingQuote] = await db
+      .select()
+      .from(quotes)
+      .where(eq(quotes.id, id))
+      .limit(1);
 
     if (!existingQuote) {
       return res.status(404).json({ message: "Quote tidak ditemukan." });
     }
 
-    const updatedQuote = await prisma.quote.update({
-      where: { id: id },
-      data: {
+    await db
+      .update(quotes)
+      .set({
         kategoriId: Number(kategoriId),
         quote,
         author,
         userId: Number(userId),
-      },
-    });
+      })
+      .where(eq(quotes.id, id));
 
-    return res
-      .status(201)
-      .json({ message: "Quote berhasil diupdate", quote: updatedQuote });
+    return res.status(200).json({
+      message: "Quote berhasil diupdate",
+    });
   } catch (error) {
     console.error("Error updating quote:", error);
-
     return res.status(500).json({
       message: "Gagal mengupdate quote karena kesalahan server.",
     });
   }
 };
-export const deleteQuote = async (req, res) => {
+
+const deleteQuote = async (req, res) => {
   const id = Number(req.params.id);
 
   if (isNaN(id) || id <= 0) {
@@ -119,21 +153,28 @@ export const deleteQuote = async (req, res) => {
   }
 
   try {
-    await prisma.quote.delete({
-      where: { id: id },
-    });
+    await db.delete(quotes).where(eq(quotes.id, id));
 
     return res.status(200).json({ message: "Quote berhasil dihapus." });
   } catch (error) {
-    if (error.code === "P2025") {
-      return res
-        .status(404)
-        .json({ message: "Quote dengan ID tersebut tidak ditemukan." });
+    if (error.code === "ER_ROW_IS_REFERENCED_2" || error.errno === 1451) {
+      return res.status(404).json({
+        message: "Quote dengan ID tersebut tidak ditemukan.",
+      });
     }
 
     console.error("Error saat menghapus quote:", error);
-    return res
-      .status(500)
-      .json({ message: "Gagal menghapus quote karena kesalahan server." });
+    return res.status(500).json({
+      message: "Gagal menghapus quote karena kesalahan server.",
+    });
   }
+};
+
+module.exports = {
+  getAllQuote,
+  getQuoteByUserId,
+  getQuoteById,
+  createQuote,
+  updateQuote,
+  deleteQuote,
 };

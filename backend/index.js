@@ -1,40 +1,75 @@
-import express from "express";
-import cors from "cors";
-import helmet from "helmet";
-import authMiddleware from "./middleware/authMiddleware.js";
-
-//Route
-import authRoute from "./routes/authRoute.js";
-import userRouter from "./routes/userRoute.js";
-import kategoriRoute from "./routes/kategoriRoute.js";
-import quoteRouter from "./routes/quoteRoute.js";
+require("dotenv").config();
+const crypto = require("crypto");
+global.crypto = crypto;
+const express = require("express");
+const cors = require("cors");
+const { initializeDB } = require("./db/index");
+const authMiddleware = require("./middleware/authMiddleware");
 
 const app = express();
 
+// KONFIGURASI CORS SEDERHANA DAN AMAN
+const corsOptions = {
+  origin: [
+    "http://localhost:5173",
+    "https://localhost:5173",
+    "https://api.zhaa.my.id",
+    "http://api.zhaa.my.id",
+  ],
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-access-token"],
+};
+
+// GUNAKAN CORS MIDDLEWARE SAJA - TANPA app.options()
+app.use(cors(corsOptions));
 app.use(express.json());
 
-app.use(
-  cors({
-    origin: [
-      "http://localhost:5173", // Development
-      "http://192.168.21.152:5173", // Your mobile access IP
-      "http://localhost:5000", // Backend itself
-      "http://192.168.21.152:5000", // Your mobile access IP
-    ],
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+// Initialize database dan start server
+async function startServer() {
+  try {
+    await initializeDB();
+    console.log("✅ Database initialized successfully");
 
-app.use(helmet());
+    // Import routes
+    const authRoute = require("./routes/authRoute");
+    const userRouter = require("./routes/userRoute");
+    const kategoriRoute = require("./routes/kategoriRoute");
+    const quoteRouter = require("./routes/quoteRoute");
 
-app.use("/api/auth", authRoute);
-app.use("/api/user", authMiddleware, userRouter);
-app.use("/api/kategori", authMiddleware, kategoriRoute);
-app.use("/api/quote", quoteRouter);
+    // Setup routes
+    app.use("/api/auth", authRoute);
+    app.use("/api/user", authMiddleware, userRouter);
+    app.use("/api/kategori", authMiddleware, kategoriRoute);
+    app.use("/api/quote", quoteRouter);
 
-const PORT = process.env.PORT;
-app.listen(PORT, () => {
-  console.log(`Started Express http://localhost:${PORT}`);
-});
+    // Health check endpoint
+    app.get("/health", (req, res) => {
+      res.status(200).json({
+        status: "OK",
+        message: "Server is running",
+        timestamp: new Date().toISOString(),
+      });
+    });
+
+    // Test CORS endpoint
+    app.get("/api/test-cors", (req, res) => {
+      res.json({
+        message: "CORS is working!",
+        origin: req.headers.origin,
+        timestamp: new Date().toISOString(),
+      });
+    });
+
+    const PORT = process.env.PORT || 5000;
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 Server started on port ${PORT}`);
+      console.log(`📍 Local: http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error("❌ Failed to start server:", error);
+    process.exit(1);
+  }
+}
+
+startServer();

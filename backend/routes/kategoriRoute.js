@@ -1,12 +1,12 @@
 //MADE BY Andrian
-import express from "express";
-import {
+const express = require("express");
+const {
   getAllKategori,
   getKategoriById,
   createKategori,
   updateKategori,
   deleteKategori,
-} from "../controllers/kategoriController.js";
+} = require("../controllers/kategoriController");
 
 const router = express.Router();
 
@@ -15,4 +15,5 @@ router.get("/:id", getKategoriById);
 router.post("/", createKategori);
 router.put("/:id", updateKategori);
 router.delete("/:id", deleteKategori);
-export default router;
+
+module.exports = router;

@@ -1,15 +1,15 @@
-import express from "express";
-import authMiddleware from "../middleware/authMiddleware.js";
+const express = require("express");
+const authMiddleware = require("../middleware/authMiddleware");
 const router = express.Router();
 
-import {
+const {
   getAllQuote,
   getQuoteByUserId,
   getQuoteById,
   createQuote,
   updateQuote,
   deleteQuote,
-} from "../controllers/quoteController.js";
+} = require("../controllers/quoteController");
 
 router.get("/", getAllQuote);
 router.get("/user/:id", authMiddleware, getQuoteByUserId);
@@ -18,4 +18,4 @@ router.post("/", authMiddleware, createQuote);
 router.put("/:id", authMiddleware, updateQuote);
 router.delete("/:id", authMiddleware, deleteQuote);
 
-export default router;
+module.exports = router;

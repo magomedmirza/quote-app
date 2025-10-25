@@ -1,7 +1,7 @@
 // config/key.js
 
-import { createSecretKey } from "crypto";
-import dotenv from "dotenv";
+const { createSecretKey } = require("crypto");
+const dotenv = require("dotenv");
 // Menggunakan 'dotenv/config' di file utama (index.js) atau app.js lebih disarankan,
 // tapi ini berfungsi jika Anda mengimpor file ini terlebih dahulu.
 dotenv.config();
@@ -25,4 +25,4 @@ const REFRESH_TOKEN_SECRET = createSecretKey(
 );
 
 // Ekspor variabel yang sudah dalam format Uint8Array
-export { ACCESS_TOKEN_SECRET, REFRESH_TOKEN_SECRET };
+module.exports = { ACCESS_TOKEN_SECRET, REFRESH_TOKEN_SECRET };

@@ -1,73 +1,125 @@
-// src/auth/tokenService.js
-
-import { SignJWT, jwtVerify } from "jose";
-import { ACCESS_TOKEN_SECRET, REFRESH_TOKEN_SECRET } from "../config/key.js";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-// Pastikan model RefreshToken sudah ada di schema.prisma Anda!
+const { ACCESS_TOKEN_SECRET, REFRESH_TOKEN_SECRET } = require("../config/key");
+const db = require("../db/index").getDB();
+const { eq } = require("drizzle-orm");
+const { refreshTokens } = require("../db/schema");
 
 /**
  * Membuat Access Token dan Refresh Token, lalu menyimpan Refresh Token di database.
- * @param {object} userPayload - Payload minimal untuk dimasukkan ke dalam JWT (misal: {id, username}).
- * @returns {Promise<{accessToken: string, refreshToken: string}>}
  */
-export async function generateTokens(userPayload) {
-  // 1. Access Token (Short-lived, untuk otorisasi API)
-  const accessToken = await new SignJWT(userPayload)
+async function generateTokens(userPayload) {
+  // Dynamic import untuk jose
+  const { SignJWT } = await import("jose");
+
+  const accessTokenSecret = new TextEncoder().encode(ACCESS_TOKEN_SECRET);
+  const refreshTokenSecret = new TextEncoder().encode(REFRESH_TOKEN_SECRET);
+
+  // 1. Access Token
+  const accessToken = await new SignJWT({
+    userId: userPayload.id,
+    nama: userPayload.nama,
+    role: userPayload.role,
+  })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime("15m") // Access Token kedaluwarsa dalam 15 menit
-    .sign(ACCESS_TOKEN_SECRET);
+    .setExpirationTime("15m")
+    .sign(accessTokenSecret);
 
-  // 2. Refresh Token (Long-lived, untuk mendapatkan token baru)
-  // Payload Refresh Token disarankan lebih minimal, cukup userId.
+  // 2. Refresh Token
   const refreshToken = await new SignJWT({ userId: userPayload.id })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime("30d") // Refresh Token kedaluwarsa dalam 30 hari
-    .sign(REFRESH_TOKEN_SECRET);
+    .setExpirationTime("30d")
+    .sign(refreshTokenSecret);
 
-  // 3. Simpan Refresh Token ke Database (Prisma)
-  // Ini penting untuk keamanan (Revocation & Rotation)
+  // 3. Simpan Refresh Token ke Database
   try {
-    await prisma.refreshToken.create({
-      data: {
-        token: refreshToken,
-        userId: userPayload.id,
-      },
+    await db.insert(refreshTokens).values({
+      token: refreshToken,
+      userId: userPayload.id,
     });
   } catch (error) {
     console.error("Gagal menyimpan Refresh Token ke database:", error);
-    // Tergantung kebijakan Anda, Anda mungkin ingin melemparkan error di sini
-    // return new Error("Gagal menyimpan Refresh Token");
   }
 
   return { accessToken, refreshToken };
 }
 
-// ---
-
 /**
- * Memverifikasi Access Token (digunakan di middleware otorisasi).
- * @param {string} token - Access Token (JWT string)
- * @returns {Promise<object>} - Payload token yang sudah terverifikasi.
+ * Memverifikasi Access Token
  */
-export async function verifyAccessToken(token) {
-  // jwtVerify akan melemparkan error jika token tidak valid (misal: expired, signature salah)
-  const { payload } = await jwtVerify(token, ACCESS_TOKEN_SECRET);
-  return payload;
+async function verifyAccessToken(token) {
+  try {
+    const { jwtVerify } = await import("jose");
+    const accessTokenSecret = new TextEncoder().encode(ACCESS_TOKEN_SECRET);
+    const { payload } = await jwtVerify(token, accessTokenSecret);
+
+    console.log("✅ Access token verified:", {
+      userId: payload.userId,
+      nama: payload.nama,
+      role: payload.role,
+    });
+
+    return payload;
+  } catch (error) {
+    console.error("Access Token verification failed:", error.message);
+    throw new Error("Invalid or expired access token");
+  }
 }
 
-// ---
-
 /**
- * Memverifikasi Refresh Token (digunakan di endpoint /refresh).
- * @param {string} token - Refresh Token (JWT string)
- * @returns {Promise<object>} - Payload token yang sudah terverifikasi.
+ * Memverifikasi Refresh Token
  */
-export async function verifyRefreshToken(token) {
-  // jwtVerify akan melemparkan error jika token tidak valid atau expired
-  const { payload } = await jwtVerify(token, REFRESH_TOKEN_SECRET);
-  return payload;
+async function verifyRefreshToken(token) {
+  try {
+    const { jwtVerify } = await import("jose");
+    const refreshTokenSecret = new TextEncoder().encode(REFRESH_TOKEN_SECRET);
+    const { payload } = await jwtVerify(token, refreshTokenSecret);
+    return payload;
+  } catch (error) {
+    console.error("Refresh Token verification failed:", error.message);
+    throw new Error("Invalid or expired refresh token");
+  }
 }
+
+// ... fungsi lainnya tetap sama
+async function deleteRefreshToken(token) {
+  try {
+    await db.delete(refreshTokens).where(eq(refreshTokens.token, token));
+  } catch (error) {
+    console.error("Gagal menghapus refresh token:", error);
+    throw error;
+  }
+}
+
+async function isRefreshTokenExists(token) {
+  try {
+    const [result] = await db
+      .select({ token: refreshTokens.token })
+      .from(refreshTokens)
+      .where(eq(refreshTokens.token, token))
+      .limit(1);
+
+    return !!result;
+  } catch (error) {
+    console.error("Gagal memeriksa refresh token:", error);
+    return false;
+  }
+}
+
+async function deleteAllUserRefreshTokens(userId) {
+  try {
+    await db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+  } catch (error) {
+    console.error("Gagal menghapus refresh tokens user:", error);
+    throw error;
+  }
+}
+
+module.exports = {
+  generateTokens,
+  verifyAccessToken,
+  verifyRefreshToken,
+  deleteRefreshToken,
+  isRefreshTokenExists,
+  deleteAllUserRefreshTokens,
+};
