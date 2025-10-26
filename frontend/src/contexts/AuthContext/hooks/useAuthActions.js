@@ -33,13 +33,20 @@ export const useAuthActions = () => {
       const refreshToken = authStorage.get("refreshToken");
 
       if (refreshToken) {
-        await api.post("/auth/logout", { refreshToken });
+        // ✅ HANDLE 404 - TETAP LANJUT LOGOUT MESKI 404
+        await api.post("/auth/logout", { refreshToken }).catch((err) => {
+          if (err.response?.status === 404) {
+            console.log("Logout endpoint not found - continuing logout");
+            return; // Lanjut logout meski 404
+          }
+          throw err; // Throw other errors
+        });
       }
     } catch (error) {
       console.error("Logout API error:", error);
     } finally {
       authStorage.clear();
-      window.location.href = "/login";
+      window.location.href = window.location.origin + "/";
     }
   };
 

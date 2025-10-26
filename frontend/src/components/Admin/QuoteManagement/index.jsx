@@ -127,6 +127,7 @@ const QuoteManagement = () => {
   };
 
   if (isLoading) return <LoadingState />;
+
   if (error) return <ErrorState error={error} />;
 
   return (

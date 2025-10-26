@@ -10,7 +10,12 @@ export const useCategories = () => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await api.get("/kategori");
+      const response = await api.get("/kategori").catch((err) => {
+        if (err.response?.status === 404) {
+          return { data: [] };
+        }
+        throw err;
+      });
       setCategories(response.data || []);
     } catch (err) {
       console.error("Error fetching categories:", err);

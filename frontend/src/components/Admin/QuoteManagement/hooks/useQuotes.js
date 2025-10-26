@@ -10,13 +10,21 @@ export const useQuotes = () => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await api.get("/quote");
+      const response = await api.get("/quote").catch((err) => {
+        // ✅ HANDLE 404 - DATA KOSONG BUKAN ERROR
+        if (err.response?.status === 404) {
+          return { data: [] };
+        }
+        throw err;
+      });
+
       setQuotes(response.data || []);
     } catch (err) {
       console.error("Error fetching quotes:", err);
-      setError(
-        err.response?.data?.message || "Gagal memuat data quote dari server."
-      );
+      // ✅ JANGAN SET ERROR JIKA 404
+      if (err.response?.status !== 404) {
+        setError(err.response?.data?.message || "Gagal memuat data quote.");
+      }
       setQuotes([]);
     } finally {
       setIsLoading(false);

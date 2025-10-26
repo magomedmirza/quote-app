@@ -10,7 +10,12 @@ export const useUsers = () => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await api.get("/user");
+      const response = await api.get("/user").catch((err) => {
+        if (err.response?.status === 404) {
+          return { data: [] };
+        }
+        throw err;
+      });
       setUsers(response.data || []);
     } catch (err) {
       console.error("Error fetching users:", err);

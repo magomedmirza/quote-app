@@ -20,8 +20,13 @@ export const useMyQuotes = () => {
         throw new Error("User ID tidak ditemukan");
       }
 
-      const response = await api.get(`/quote/user/${userId}`);
-      console.log("Quotes response:", response.data); // DEBUG
+      const response = await api.get(`/quote/user/${userId}`).catch((err) => {
+        if (err.response?.status === 404) {
+          return { data: [] };
+        }
+        throw err;
+      });
+
       setQuotes(response.data || []);
     } catch (err) {
       console.error("Error fetching my quotes:", err);
