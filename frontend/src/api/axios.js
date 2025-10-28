@@ -1,11 +1,13 @@
 import axios from "axios";
 import API_CONFIG from "../config/api";
+import { authStorage } from "../utils/auth/storage";
 
 const api = axios.create({
   baseURL: API_CONFIG.baseURL,
   headers: {
     "Content-Type": "application/json",
   },
+  timeout: 15000,
 });
 
 let isRefreshing = false;
@@ -22,97 +24,179 @@ const processQueue = (error, token = null) => {
   failedQueue = [];
 };
 
-// Constants untuk localStorage keys
-const STORAGE_KEYS = {
-  ACCESS_TOKEN: "accessToken",
-  REFRESH_TOKEN: "refreshToken",
-  USER_ID: "userId",
-  USER_NAME: "userName",
-  USER_ROLE: "userRole",
-};
+const getAccessToken = () => authStorage.get("accessToken");
+const getRefreshToken = () => authStorage.get("refreshToken");
 
-// Helper function untuk logout
-const logout = () => {
-  console.log("🚪 Logging out...");
-  Object.values(STORAGE_KEYS).forEach((key) => {
-    localStorage.removeItem(key);
-  });
+// ✅ TOKEN EXPIRY CHECK FUNCTION
+const isTokenExpired = (token) => {
+  if (!token) return true;
 
-  // Redirect ke login page
-  if (window.location.pathname !== "/login") {
-    window.location.href = "/login";
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    const expiry = payload.exp * 1000;
+    const now = Date.now();
+    const isExpired = now >= expiry;
+
+    console.log("🔍 Token expiry check:", {
+      expiry: new Date(expiry),
+      now: new Date(now),
+      isExpired,
+      timeRemaining: isExpired
+        ? "EXPIRED"
+        : Math.floor((expiry - now) / 1000) + " seconds",
+    });
+
+    return isExpired;
+  } catch (error) {
+    console.error("❌ Error checking token expiry:", error);
+    return true;
   }
 };
 
-// Helper function untuk mendapatkan access token
-const getAccessToken = () => localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
-const getRefreshToken = () => localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
+// ✅ GET TOKEN PAYLOAD INFO (for debugging)
+const getTokenInfo = (token) => {
+  if (!token) return null;
 
-// Request Interceptor
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return {
+      userId: payload.userId,
+      nama: payload.nama,
+      role: payload.role,
+      issuedAt: new Date(payload.iat * 1000),
+      expiresAt: new Date(payload.exp * 1000),
+      isExpired: Date.now() >= payload.exp * 1000,
+    };
+  } catch (error) {
+    console.error("❌ Error parsing token:", error);
+    return null;
+  }
+};
+
+const logout = () => {
+  console.log("🚪 Logging out...");
+  authStorage.clear();
+
+  // Delay sedikit untuk memastikan storage cleared
+  setTimeout(() => {
+    window.location.href = window.location.origin + "/";
+  }, 100);
+};
+
+// ✅ REQUEST INTERCEPTOR
 api.interceptors.request.use(
   (config) => {
     const accessToken = getAccessToken();
+
     if (accessToken) {
       config.headers.Authorization = `Bearer ${accessToken}`;
-      console.log(
-        "🔄 Request dengan token:",
-        config.url,
-        "Token:",
-        accessToken.substring(0, 20) + "..."
-      );
+
+      // ✅ CHECK TOKEN EXPIRY BEFORE REQUEST
+      const isExpired = isTokenExpired(accessToken);
+      const tokenInfo = getTokenInfo(accessToken);
+
+      console.log("🔐 Request with token:", {
+        url: config.url,
+        tokenPreview: accessToken.substring(0, 20) + "...",
+        isExpired,
+        userId: tokenInfo?.userId,
+        expiresIn: tokenInfo
+          ? Math.floor((tokenInfo.expiresAt - Date.now()) / 1000) + "s"
+          : "N/A",
+      });
+
+      // ✅ TANDAI JIKA TOKEN SUDAH EXPIRED (untuk response interceptor)
+      if (isExpired) {
+        config._tokenExpired = true;
+      }
+    } else {
+      console.log(`🔓 Request without token: ${config.url}`);
     }
+
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => {
+    console.error("❌ Request interceptor error:", error);
+    return Promise.reject(error);
+  }
 );
 
-// Response Interceptor - IMPROVED VERSION
+// ✅ RESPONSE INTERCEPTOR - COMPLETE VERSION
 api.interceptors.response.use(
   (response) => {
-    console.log("✅ Response success:", response.config.url);
+    console.log(`✅ Response success: ${response.config.url}`, response.status);
     return response;
   },
   async (error) => {
     const originalRequest = error.config;
 
-    // Handle network errors atau request cancelled
+    console.log("🔴 INTERCEPTOR TRIGGERED:", {
+      url: originalRequest?.url,
+      status: error.response?.status,
+      message: error.response?.data?.message,
+      config: {
+        hasRetry: originalRequest?._retry,
+        tokenExpired: originalRequest?._tokenExpired,
+      },
+    });
+
+    // Handle network errors
     if (!error.response) {
-      console.log("🔴 Network error or request cancelled:", error.message);
+      console.log("🌐 Network error:", error.message);
       return Promise.reject(error);
     }
 
     const { status, data } = error.response;
-    const isTokenError = status === 401 || status === 403;
-    const shouldRetry =
-      isTokenError &&
-      !originalRequest?._retry &&
-      originalRequest?.url &&
-      !originalRequest.url.includes("/auth/") &&
-      getRefreshToken(); // Hanya retry jika ada refresh token
+    const accessToken = getAccessToken();
+    const refreshToken = getRefreshToken();
 
-    console.log("🔴 Interceptor Error:", {
-      url: originalRequest?.url,
+    // ✅ CHECK TOKEN EXPIRY FROM REQUEST CONFIG OR RESPONSE
+    const isAccessTokenExpired =
+      originalRequest?._tokenExpired || isTokenExpired(accessToken);
+
+    console.log("🔍 Token Status Check:", {
+      hasAccessToken: !!accessToken,
+      hasRefreshToken: !!refreshToken,
+      isAccessTokenExpired,
       status,
-      message: data?.message,
-      isRefreshing,
-      hasRetry: originalRequest?._retry,
-      shouldRetry,
+      shouldRefresh:
+        (status === 401 || isAccessTokenExpired) && !originalRequest?._retry,
     });
 
-    if (shouldRetry) {
-      console.log("🔄 Token error detected, starting token refresh...");
+    // ✅ CONDITION FOR REFRESH TOKEN
+    const shouldRefresh =
+      (status === 401 || isAccessTokenExpired) &&
+      originalRequest &&
+      !originalRequest._retry &&
+      refreshToken;
+
+    if (shouldRefresh) {
+      console.log("🔄 Token refresh required:", {
+        reason: status === 401 ? "401 Response" : "Token Expired",
+        url: originalRequest.url,
+      });
+
+      // ✅ EXCLUDE AUTH ENDPOINTS (except refresh itself)
+      const isAuthEndpoint = originalRequest.url.includes("/auth/");
+      const isRefreshEndpoint = originalRequest.url.includes("/auth/refresh");
+
+      if (isAuthEndpoint && !isRefreshEndpoint) {
+        console.log("⏩ Skip refresh for auth endpoint");
+        return Promise.reject(error);
+      }
 
       if (isRefreshing) {
-        console.log("⏳ Refresh already in progress, queuing request...");
+        console.log("⏳ Refresh in progress, queuing request...");
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         })
           .then((token) => {
+            console.log("🎯 Processing queued request with new token");
             originalRequest.headers.Authorization = `Bearer ${token}`;
             return api(originalRequest);
           })
           .catch((err) => {
-            console.log("❌ Queued request failed:", err);
+            console.error("❌ Queued request failed:", err);
             return Promise.reject(err);
           });
       }
@@ -121,21 +205,28 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        console.log("🔄 Calling refresh token endpoint...");
-        const refreshToken = getRefreshToken();
+        console.log("🔄 Starting token refresh process...");
 
         const refreshResponse = await axios.post(
-          `${API_CONFIG.baseURL}/auth/refresh`, // PERBAIKAN: path yang konsisten
+          `${API_CONFIG.baseURL}/auth/refresh`,
           { refreshToken },
           {
             headers: {
               "Content-Type": "application/json",
             },
-            timeout: 10000, // Timeout 10 detik
+            timeout: 10000,
           }
         );
 
-        console.log("✅ Refresh token successful");
+        console.log("✅ Refresh token SUCCESS:", {
+          status: refreshResponse.status,
+          data: {
+            hasAccessToken: !!refreshResponse.data.accessToken,
+            hasRefreshToken: !!refreshResponse.data.refreshToken,
+            userId: refreshResponse.data.userId,
+            nama: refreshResponse.data.nama,
+          },
+        });
 
         const {
           accessToken: newAccessToken,
@@ -146,46 +237,62 @@ api.interceptors.response.use(
         } = refreshResponse.data;
 
         if (!newAccessToken) {
-          throw new Error("No access token in refresh response");
+          throw new Error("No access token received from refresh endpoint");
         }
 
-        console.log("💾 Saving new tokens...");
+        // ✅ UPDATE AUTH STORAGE
+        authStorage.setUserData({
+          userId,
+          accessToken: newAccessToken,
+          refreshToken: newRefreshToken,
+          nama,
+          role,
+        });
 
-        // Update tokens dan user data
-        localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, newAccessToken);
-        if (newRefreshToken) {
-          localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, newRefreshToken);
-        }
-        if (nama) localStorage.setItem(STORAGE_KEYS.USER_NAME, nama);
-        if (role) localStorage.setItem(STORAGE_KEYS.USER_ROLE, role);
-        if (userId) localStorage.setItem(STORAGE_KEYS.USER_ID, userId);
+        console.log("💾 Tokens updated in storage:", {
+          newAccessToken: newAccessToken.substring(0, 20) + "...",
+          newRefreshToken: newRefreshToken
+            ? newRefreshToken.substring(0, 20) + "..."
+            : "No new refresh token",
+        });
 
-        console.log("📝 User data updated:", { nama, role, userId });
+        // ✅ VERIFY STORAGE UPDATE
+        const storedAccessToken = authStorage.get("accessToken");
+        console.log("🔍 Storage verification:", {
+          storedToken: storedAccessToken?.substring(0, 20) + "...",
+          matches: storedAccessToken === newAccessToken,
+        });
 
-        // Update authorization header untuk request asli
+        // ✅ UPDATE HEADER FOR RETRY
         originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
 
-        // Process semua request yang tertahan dengan token baru
+        // ✅ PROCESS ALL QUEUED REQUESTS
         processQueue(null, newAccessToken);
 
-        console.log("🔄 Retrying original request...");
-        return api(originalRequest);
+        console.log("🔄 Retrying original request with new token...");
+        const retryResponse = await api(originalRequest);
+        console.log("✅ Retry request SUCCESS");
+
+        return retryResponse;
       } catch (refreshError) {
-        console.error("❌ Refresh token failed:", {
+        console.error("❌ REFRESH TOKEN FAILED:", {
           status: refreshError.response?.status,
           data: refreshError.response?.data,
           message: refreshError.message,
+          config: refreshError.config,
         });
 
-        // Process semua request yang tertahan dengan error
+        // ✅ PROCESS QUEUE WITH ERROR
         processQueue(refreshError, null);
 
-        // Logout hanya jika error bukan 401 dari refresh endpoint
-        if (refreshError.response?.status !== 401) {
+        // ✅ AUTO LOGOUT ON INVALID REFRESH TOKEN
+        if (refreshError.response?.status === 401) {
+          console.log("🛑 Refresh token invalid or expired - AUTO LOGOUT");
           logout();
+        } else if (refreshError.code === "ECONNABORTED") {
+          console.log("⏰ Refresh request timeout");
         } else {
-          // Jika refresh token juga invalid, logout
-          logout();
+          console.log("⚠️ Refresh failed for other reason");
         }
 
         return Promise.reject(refreshError);
@@ -194,23 +301,110 @@ api.interceptors.response.use(
       }
     }
 
-    // Handle token errors yang tidak bisa di-retry
-    if (isTokenError && originalRequest?.url?.includes("/auth/")) {
-      console.log("🔴 Auth endpoint error, logging out...");
+    // ✅ HANDLE OTHER 401 ERRORS (Non-retryable)
+    if (status === 401 && !originalRequest?._retry) {
+      console.log("🔴 Non-retryable 401 - Redirecting to login");
+
+      // Check if we have any tokens at all
+      if (!accessToken && !refreshToken) {
+        console.log("🔓 No tokens available - already logged out");
+      } else {
+        logout();
+      }
+    }
+
+    // ✅ HANDLE TOKEN EXPIRED WITHOUT REFRESH TOKEN
+    if (isAccessTokenExpired && !refreshToken) {
+      console.log("🔴 Access token expired but no refresh token available");
       logout();
     }
 
-    // Handle other errors
     return Promise.reject(error);
   }
 );
 
-// Tambahkan method untuk manual logout
-api.logout = logout;
+// ✅ MANUAL TOKEN REFRESH FUNCTION
+export const manualTokenRefresh = async () => {
+  try {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) {
+      throw new Error("No refresh token available");
+    }
 
-// Tambahkan method untuk check auth status
-api.isAuthenticated = () => {
-  return !!getAccessToken();
+    console.log("🔄 Manual token refresh initiated...");
+
+    const response = await axios.post(
+      `${API_CONFIG.baseURL}/auth/refresh`,
+      { refreshToken },
+      {
+        headers: { "Content-Type": "application/json" },
+        timeout: 10000,
+      }
+    );
+
+    const {
+      accessToken,
+      refreshToken: newRefreshToken,
+      nama,
+      role,
+      userId,
+    } = response.data;
+
+    authStorage.setUserData({
+      userId,
+      accessToken,
+      refreshToken: newRefreshToken,
+      nama,
+      role,
+    });
+
+    console.log("✅ Manual token refresh SUCCESS");
+
+    return {
+      accessToken,
+      refreshToken: newRefreshToken,
+      userId,
+      nama,
+      role,
+    };
+  } catch (error) {
+    console.error("❌ Manual token refresh FAILED:", error);
+
+    if (error.response?.status === 401) {
+      console.log("🛑 Refresh token invalid during manual refresh");
+      logout();
+    }
+
+    throw error;
+  }
 };
+
+// ✅ TOKEN INFO FUNCTION (for debugging)
+export const getCurrentTokenInfo = () => {
+  const accessToken = getAccessToken();
+  const refreshToken = getRefreshToken();
+
+  return {
+    accessToken: {
+      token: accessToken ? accessToken.substring(0, 20) + "..." : null,
+      info: getTokenInfo(accessToken),
+    },
+    refreshToken: {
+      token: refreshToken ? refreshToken.substring(0, 20) + "..." : null,
+      info: getTokenInfo(refreshToken),
+    },
+    storage: {
+      userId: authStorage.get("userId"),
+      userName: authStorage.get("userName"),
+      userRole: authStorage.get("userRole"),
+    },
+  };
+};
+
+// ✅ ADD METHODS TO API INSTANCE
+api.manualTokenRefresh = manualTokenRefresh;
+api.getCurrentTokenInfo = getCurrentTokenInfo;
+api.isAuthenticated = () => !!getAccessToken() && !!getRefreshToken();
+api.logout = logout;
 
 export default api;

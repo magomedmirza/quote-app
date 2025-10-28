@@ -1,7 +1,7 @@
 import useSWR from "swr";
 import api from "../../../../api/axios";
 
-const REFRESH_INTERVAL = 5000;
+const REFRESH_INTERVAL = 60000;
 
 const fetcher = (url) =>
   api

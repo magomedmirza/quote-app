@@ -27,39 +27,54 @@ const RedirectLoading = () => (
 
 const Login = () => {
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
-  const { formData, isLoading, error, handleChange, handleSubmit } = useLogin();
+  const {
+    formData,
+    isLoading,
+    error,
+    isSuccess, 
+    handleChange,
+    handleSubmit,
+  } = useLogin();
+
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Redirect based on role after login
-  useEffect(() => {
-    if (isAuthenticated && user) {
-      const from = location.state?.from?.pathname;
 
-      if (from) {
-        navigate(from, { replace: true });
-      } else {
-        const redirectPath =
-          user.role === "Admin"
-            ? "/admin"
-            : user.role === "Penulis"
-            ? "/penulis"
-            : "/";
-        navigate(redirectPath, { replace: true });
-      }
+  useEffect(() => {
+    if (isSuccess && isAuthenticated && user) {
+      console.log("🔄 Redirecting after successful login");
+
+      const from = location.state?.from?.pathname;
+      const redirectPath =
+        from ||
+        (user.role === "Admin"
+          ? "/admin"
+          : user.role === "Penulis"
+          ? "/penulis"
+          : "/dashboard");
+
+      navigate(redirectPath, { replace: true });
     }
-  }, [isAuthenticated, user, navigate, location]);
+  }, [isSuccess, isAuthenticated, user, navigate, location]);
 
   // Show loading while checking auth status
   if (authLoading) return <AuthLoading />;
 
-  // Show redirect loading if already authenticated
-  if (isAuthenticated) return <RedirectLoading />;
+
+
+  // Debug info
+  console.log("🔍 Login State:", {
+    isAuthenticated,
+    isSuccess,
+    isLoading,
+    error,
+    user: user?.role,
+  });
 
   // Main login form
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-950 p-4 font-['Inter']">
-      <div className="w-full max-w-md bg-gray-800 rounded-3xl shadow-2xl shadow-indigo-500/20 p-8 md:p-10 border border-gray-700 transition duration-300 hover:shadow-teal-500/10 relative">
+    <div className="min-h-screen flex items-center justify-center bg-gray-950 p-4">
+      <div className="w-full max-w-md bg-gray-800 rounded-3xl shadow-2xl p-8 md:p-10 border border-gray-700">
         <BackButton />
         <LoginHeader />
         <ErrorAlert error={error} />

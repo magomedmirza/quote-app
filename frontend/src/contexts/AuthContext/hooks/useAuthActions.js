@@ -4,7 +4,12 @@ import { authStorage } from "../../../utils/auth/storage";
 export const useAuthActions = () => {
   const login = async (userData) => {
     try {
+      console.log("🔄 Attempting login for:", userData.username);
+
       const response = await api.post("/auth/login", userData);
+
+      console.log("✅ Login API success:", response.data);
+
       const { userId, accessToken, refreshToken, nama, role } = response.data;
 
       // Save to storage
@@ -16,6 +21,7 @@ export const useAuthActions = () => {
         role,
       });
 
+      // ✅ FIX: Return data untuk diproses di component
       return {
         userId,
         nama,
@@ -24,6 +30,16 @@ export const useAuthActions = () => {
         refreshToken,
       };
     } catch (error) {
+      console.error("❌ Login API failed:", {
+        status: error.response?.status,
+        data: error.response?.data,
+        message: error.message,
+      });
+
+      // ✅ FIX: Clear storage jika login gagal
+      authStorage.clear();
+
+      // ✅ FIX: Throw error agar bisa ditangkap di component
       throw error;
     }
   };
